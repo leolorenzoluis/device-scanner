@@ -4,46 +4,37 @@
 
 module IML.IntegrationTest.IntegrationTest
 
-open Fable.Import.Jest.Matchers
-open Fable.Core.JsInterop
 open Fable.PowerPack
+open Fable.Import
+open Fable.Import.Node.PowerPack
 open IML.StatefulPromise.StatefulPromise
 open IML.IntegrationTestFramework.IntegrationTestFramework
 
 open Fable.Import.Jest
-open Fable.Import.Node
-open Fable.Import.Node.PowerPack
-open Fable.PowerPack.Json
+open Matchers
+
+let settle () =
+  cmd "udevadm settle"
+    >> ignoreCmd
 
 let scannerInfo =
-  pipeToShellCmd "echo '\"Info\"'" "socat - UNIX-CONNECT:/var/run/device-scanner.sock"
-let unwrapObject a =
-    match a with
-    | Json.Object a -> Map.ofArray a
-    | _ -> failwith "Invalid JSON, it must be an object"
+  (fun _ -> pipeToShellCmd "echo '\"Stream\"'" "socat - UNIX-CONNECT:/var/run/device-scanner.sock")
+    >>= settle()
 
-let unwrapResult a =
-  match a with
-  | Ok x -> x
-  | Error e -> failwith !!e
-
-let unwrapDeviceData = Json.ofString >> unwrapResult >> unwrapObject >> Map.find("blockDevices") >> unwrapObject
 let resultOutput: StatefulResult<State, Out, Err> -> string = function
   | Ok ((Stdout(r), _), _) -> r
-  | Error (e) -> failwithf "Command failed: %A" !!e
+  | Error (e) -> failwithf "Command failed: %A" e
 
-testAsync "info event" <| fun () ->
+testAsync "stream event" <| fun () ->
   command {
     return! scannerInfo
   }
-  |> startCommand "Info Event"
+  |> startCommand "Stream Event"
   |> Promise.map (fun (r, _) ->
       let json =
         r
           |> resultOutput
-          |> unwrapDeviceData
-          |> toJson
-          |> buffer.Buffer.from
+          |> JS.JSON.parse
 
       toMatchSnapshot json
   )
