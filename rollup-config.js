@@ -34,7 +34,8 @@ export default [
       'buffer',
       'https',
       'fs',
-      'path'
+      'path',
+      'url'
     ],
     output: {
       file: './dist/scanner-proxy-daemon/scanner-proxy-daemon',
@@ -48,6 +49,16 @@ export default [
     output: {
       banner: '#!/usr/bin/env node',
       file: './dist/listeners/udev-listener',
+      format: 'cjs'
+    },
+    plugins: getPlugins()
+  },
+  {
+    input: 'IML.Listeners/MountEmitter/src/IML.MountEmitter.fsproj',
+    external: ['net', 'buffer', 'stream'],
+    output: {
+      banner: '#!/usr/bin/env node',
+      file: './dist/listeners/mount-emitter',
       format: 'cjs'
     },
     plugins: getPlugins()

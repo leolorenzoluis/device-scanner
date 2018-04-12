@@ -10,6 +10,7 @@
     <Compile Include="UdevTest.fs" />
     <Compile Include="HandlersTest.fs" />
     <Compile Include="ZedTest.fs" />
+    <Compile Include="MountTest.fs" />
   </ItemGroup>
   <Import Project="..\..\.paket\Paket.Restore.targets" />
 </Project>

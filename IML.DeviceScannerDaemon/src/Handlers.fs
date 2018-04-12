@@ -6,6 +6,7 @@ module IML.DeviceScannerDaemon.Handlers
 
 open IML.Types.CommandTypes
 open IML.Types.UeventTypes
+open IML.Types.MountTypes
 open Zed
 open Thot.Json
 
@@ -20,6 +21,7 @@ let private scan init update =
 type State = {
   blockDevices: BlockDevices;
   zed: Zed;
+  localMounts: LocalMounts;
 }
 
 module State =
@@ -27,10 +29,12 @@ module State =
     {
       blockDevices = blockDevices;
       zed = zed;
+      localMounts = localMounts;
     } =
       Encode.object [
         ("zed", Zed.encode zed)
         ("blockDevices", BlockDevices.encoder blockDevices)
+        ("localMounts", LocalMounts.encoder localMounts)
       ]
 
   let encoder =
@@ -41,6 +45,7 @@ let init () =
   Ok {
     blockDevices = Map.empty;
     zed = Map.empty;
+    localMounts = Set.empty;
   }
 
 let update (state:Result<State, exn>) (command:Command):Result<State, exn> =
@@ -59,6 +64,13 @@ let update (state:Result<State, exn>) (command:Command):Result<State, exn> =
               |> Result.map (fun blockDevices ->
                 { state with
                     blockDevices = blockDevices;
+                }
+              )
+          | MountCommand x ->
+            Mount.update state.localMounts x
+              |> Result.map (fun localMounts ->
+                { state with
+                    localMounts = localMounts;
                 }
               )
           | Command.Stream ->

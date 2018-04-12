@@ -67,12 +67,49 @@ udevCommands
   )
   |> testList udevTestPrefix
 
+let mountEncode = encoder MountCommand.encode
+let mountDecode = decoder MountCommand.decode
+
+let mountTestPrefix = "encoding Mount commands"
+
+let mountParamsShort =
+  Mount.MountPoint "/",
+  Mount.BdevPath "/foo/bar",
+  Mount.FsType "ext4",
+  Mount.MountOpts "rw,rela"
+
+let mountParamsReplace =
+  let (target, source, fstype, opts) = mountParamsShort
+  target, source, fstype, opts, Mount.MountOpts "ro"
+
+let mountParamsMove =
+  let (target, source, fstype, opts) = mountParamsShort
+  target, source, fstype, opts, Mount.MountPoint "/old"
+
+let mountCommands = [
+    ("AddMount", MountCommand.AddMount mountParamsShort);
+    ("RemoveMount", MountCommand.RemoveMount mountParamsShort);
+    ("ReplaceMount", MountCommand.ReplaceMount mountParamsReplace);
+    ("MoveMount", MountCommand.MoveMount mountParamsMove);
+]
+
+mountCommands
+  |> List.map (fun ((name, cmd)) ->
+    Test(name, fun () ->
+      cmd
+        |> mountEncode
+        |> toMatchSnapshot
+    )
+  )
+  |> testList mountTestPrefix
+
 let commandTestPrefix = "encoding Commands"
 
 let commands = [
-  ("Stream", Command.Stream)
+  ("Stream", Command.Stream);
   ("ZedCommand", Command.ZedCommand ZedCommand.Init);
   ("UdevCommand", Command.UdevCommand (UdevCommand.Add "\"foo\""));
+  ("MountCommand", Command.MountCommand (MountCommand.AddMount mountParamsShort));
 ]
 
 commands
@@ -114,6 +151,20 @@ udevCommands
     )
   )
   |> testList "decoding Udev commands"
+
+mountCommands
+  |> List.map (fun ((name, cmd)) ->
+    let caseName = sprintf "%s %s 1" mountTestPrefix name
+
+    let o:string =
+      !!snaps?(caseName)
+      |> String.filter (fun x -> x <> '\n')
+
+    Test(name, fun () ->
+      mountDecode !!(JS.JSON.parse o) == Ok cmd
+    )
+  )
+  |> testList "decoding Mount commands"
 
 commands
   |> List.map (fun ((name, cmd)) ->

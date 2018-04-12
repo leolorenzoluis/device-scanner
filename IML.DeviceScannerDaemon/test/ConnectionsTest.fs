@@ -39,6 +39,7 @@ testDone "writing a connection" <| fun (d) ->
       let d = {
         blockDevices = Map.empty;
         zed = Map.empty;
+        localMounts = Set.empty;
       }
 
       Connections.writeConns d
