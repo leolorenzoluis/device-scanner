@@ -4,8 +4,10 @@
     <TargetFramework>netstandard2.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../src/IML.ScannerProxyDaemon.fsproj" />
-    <Compile Include="ConfigParserTest.fs" />
+    <ProjectReference Include="../src/IML.DeviceAggregatorDaemon.fsproj" />
+    <Compile Include="TestFixtures.fs" />
+    <Compile Include="HeartbeatsTest.fs" />
+    <Compile Include="HandlersTest.fs" />
   </ItemGroup>
   <Import Project="..\..\.paket\Paket.Restore.targets" />
 </Project>
