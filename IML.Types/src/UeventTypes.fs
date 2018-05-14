@@ -16,11 +16,6 @@ open Thoth.Json
 open IML.CommonLibrary
 
 
-[<Erase>]
-type DevPath = DevPath of string
-[<Erase>]
-type Path = Path of string
-
 let private splitSpace (x:string) =  x.Split([| ' ' |], System.StringSplitOptions.RemoveEmptyEntries)
 let private isOne x = x = "1"
 
@@ -60,6 +55,12 @@ let decodeLvmUuids (value:obj) =
   else
     Decode.BadPrimitive ("a string", value)
       |> Error
+
+[<Erase>]
+type DevPath = DevPath of string
+
+[<Erase>]
+type Path = Path of string
 
 /// The data emitted after processing a
 /// udev block device add | change | remove event
@@ -110,6 +111,15 @@ module UEvent =
       |> Option.map int
       |> Option.map ((*) 512)
       |> Option.map string
+
+  let pathValue (Path x) =
+    Encode.string x
+
+  let pathValues xs =
+    Array.map pathValue xs
+
+  let devPathValue (DevPath x) =
+    Encode.string x
 
   let majorMinor x =
     sprintf "%s:%s" x.major x.minor
@@ -322,23 +332,10 @@ module UEvent =
       vgUuid = vgUuid
       mdUUID = mdUuid
     } =
-      let pathValue (Path x) =
-        Encode.string x
-
-      let pathValues =
-        paths
-          |> Array.map pathValue
-
-      let devPathValue (DevPath x) =
-        Encode.string x
-
-      let encodeStrings xs =
-        Array.map Encode.string xs
-
       Encode.object [
         ("major", Encode.string major);
         ("minor", Encode.string minor);
-        ("paths", Encode.array pathValues);
+        ("paths", Encode.array (pathValues paths));
         ("devName", pathValue devName);
         ("devPath", devPathValue devPath);
         ("parent", Encode.option devPathValue parent);

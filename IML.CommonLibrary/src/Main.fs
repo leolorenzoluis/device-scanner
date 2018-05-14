@@ -6,6 +6,10 @@
 module IML.CommonLibrary
 
 open System
+open Thoth.Json
+
+let encodeStrings xs =
+  Array.map Encode.string xs
 
 [<RequireQualifiedAccess>]
 module Result =

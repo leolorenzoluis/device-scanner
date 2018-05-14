@@ -14,35 +14,27 @@ open IML.Types.MessageTypes
 open Matchers
 open Heartbeats
 open Handlers
-open TestFixtures
+open IML.Types.Fixtures
 
 let testServerHost = "localhost"
 let testServerPort = 8181
 
-let updatePayload = updateString |> (Data >> Message.encoder >> Some)
+/// scanner output forwarded from the proxy
+let updatePayloadWith x = x |> (Data >> Message.encoder >> Some)
+let updatePayload = updatePayloadWith fixtures.scannerState
 let heartbeatPayload = Heartbeat |> Message.encoder |> Some
 
-testList "Get and Update Tree" [
-  let withSetup f ():unit =
-    let getTree () =
-      devTree
-        |> toJson
+test "host has pool disks" <| fun () ->
+  toEqual(matchPaths ["/foo/bar"; "/foo/baz"; "/bar/baz"] ["/foo/bar"; "/bar/baz"], true)
+    |> ignore
 
-    f (getTree)
+test "host doesn't have pool disks" <| fun () ->
+  toEqual(matchPaths ["/foo/bar"; "/foo/baz"; "/bar/baz"] ["/foo/bar"; "/bar/boz"], true)
+    |> ignore
 
-  yield! testFixture withSetup [
-    "should return Json empty map when tree is empty", fun (handler) ->
-      expect.assertions 1
-      handler()
-        |> toMatchSnapshot
-
-    "should return populated tree after update", fun (handler) ->
-      expect.assertions 1
-      devTree <- Map.add "foo.com" "{blockDevices:{}}" devTree
-      handler()
-        |> toMatchSnapshot
-  ]
-]
+test "Discover no pools on host" <| fun () ->
+  discoverZpools "ffo.com" Map.empty Map.empty List.empty
+    |> toMatchSnapshot
 
 testList "Server" [
   let withSetup f (d:Jest.Bindings.DoneStatic):unit =
@@ -134,15 +126,12 @@ testList "Server" [
         |> Writable.onFinish get
         |> Writable.``end`` updatePayload
 
-    // fixme: seems to be using a real-timer rather than a fake
-    // "should receive empty tree in get response after post with heartbeat", fun _ _ postThenGet _ ->
-      // expect.assertions 1
-      // jest.useFakeTimers()
-        // |> ignore
-      // postThenGet heartbeatPayload
-      // jest.runAllTimers()
-      // jest.useRealTimers()
-        // |> ignore
+    "should receive empty tree in get response after post with heartbeat", fun _ _ postThenGet _ ->
+      expect.assertions 1
+      jest.useFakeTimers()
+        |> ignore
+      postThenGet heartbeatPayload
+      jest.runAllTimers()
 
     "should receive empty tree in get response after patch with update", fun get _ _ patch->
       expect.assertions 1
@@ -155,5 +144,17 @@ testList "Server" [
       post "bar.com" None
         |> Writable.onFinish (fun () -> postThenGet updatePayload)
         |> Writable.``end`` updatePayload
+
+    "should receive tree after updates from multiple hosts with shared pools", fun _ post postThenGet _ ->
+      expect.assertions 1
+      post "bar.com" None
+        |> Writable.onFinish (fun () -> postThenGet (updatePayloadWith fixtures.scannerState3))
+        |> Writable.``end`` (updatePayloadWith fixtures.scannerState2)
+
+    "should receive tree after updates from multiple hosts with shared datasets", fun _ post postThenGet _ ->
+      expect.assertions 1
+      post "bar.com" None
+        |> Writable.onFinish (fun () -> postThenGet (updatePayloadWith fixtures.scannerStateDatasets2))
+        |> Writable.``end`` (updatePayloadWith fixtures.scannerStateDatasets)
   ]
 ]
