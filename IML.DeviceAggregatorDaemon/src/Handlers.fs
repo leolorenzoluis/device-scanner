@@ -10,108 +10,31 @@ open Fable.Import.Node.PowerPack
 open IML.CommonLibrary
 open IML.Types.MessageTypes
 open IML.Types.ScannerStateTypes
-open IML.Types.LegacyTypes
-open LegacyParser
 open Heartbeats
 open Thoth.Json
+open Query
+open Fable
 
-let mutable devTree : Map<string, State> = Map.empty
+type DevTree = Map<string, State>
+let mutable devTree : DevTree = Map.empty
+
+let init() =
+    Ok devTree
 
 let timeoutHandler host =
     printfn "Aggregator received no heartbeat from host %A" host
     devTree <- Map.remove host devTree
 
-let matchPaths (hPaths : string list) (pPaths : string list) =
-    pPaths
-    |> List.filter (fun x -> List.contains x hPaths)
-    |> (=) pPaths
-
-let discoverZpools (host : string) (ps : Map<string, LegacyZFSDev>)
-    (ds : Map<string, LegacyZFSDev>) (blockDevices : LegacyBlockDev list) =
-    let mutable pools = ps
-    let mutable datasets = ds
-    devTree
-    // remove current host, we are looking for pools on other hosts
-    |> Map.filter (fun k _ -> k <> host)
-    |> Map.map (fun _ v ->
-           // we want pools/datasets but don't need key
-           let (pps, dds) =
-               v.zed
-               |> Map.toList
-               |> List.map snd
-               // keep pools if we have all their drives
-               |> List.filter (fun p ->
-                      let hostPaths =
-                          blockDevices |> List.map (fun x -> (string x.path))
-                      p.vdev
-                      |> getDisks
-                      |> matchPaths hostPaths)
-               |> List.filter
-                      (fun p ->
-                      not (List.contains p.state [ "EXPORTED"; "UNAVAIL" ]))
-               |> parsePools blockDevices
-           pps |> Map.iter (fun k v -> pools <- Map.add k v pools)
-           dds |> Map.iter (fun k v -> datasets <- Map.add k v datasets))
-    |> ignore
-    (pools, datasets)
-
-let parseSysBlock (host : string) (state : State) =
-    let xs =
-        state.blockDevices
-        |> Map.toList
-        |> List.map snd
-        |> List.filter filterDevice
-        |> List.map (LegacyBlockDev.ofUEvent state.blockDevices)
-
-    let blockDeviceNodes : Map<string, LegacyBlockDev> =
-        xs
-        |> List.map (fun x -> (x.major_minor, x))
-        |> Map.ofList
-
-    let mutable blockDeviceNodes' =
-        Map.map (fun _ v -> LegacyDev.LegacyBlockDev v) blockDeviceNodes
-    let mpaths = Mpath.ofBlockDevices state.blockDevices
-
-    let ndt =
-        blockDeviceNodes
-        |> NormalizedDeviceTable.create
-        |> Mpath.addToNdt mpaths
-
-    let vgs, lvs = parseDmDevs xs
-    let mds = parseMdraidDevs xs ndt
-    let zfspools, zfsdatasets = parseZfs xs state.zed
-    let localFs = parseLocalFs state.blockDevices zfsdatasets state.localMounts
-    let zfspools, zfsdatasets = discoverZpools host zfspools zfsdatasets xs
-    // update blockDeviceNodes map with zfs pools and datasets
-    Map(Seq.concat [ (Map.toSeq zfspools)
-                     (Map.toSeq zfsdatasets) ])
-    |> Map.iter
-           (fun _ v ->
-           blockDeviceNodes' <- Map.add v.block_device
-                                    (LegacyDev.LegacyZFSDev v) blockDeviceNodes')
-    { // @TODO: need encoder for all below types
-      devs = blockDeviceNodes'
-      lvs = lvs
-      vgs = vgs
-      mds = mds
-      local_fs = localFs
-      zfspools = zfspools
-      zfsdatasets = zfsdatasets
-      mpath = mpaths }
-
-let updateTree host x =
+let updateTree host x devTree =
     let state = Decode.decodeString State.decoder x |> Result.unwrap
     Map.add host state devTree
 
-let serverHandler (request : Http.IncomingMessage)
-    (response : Http.ServerResponse) =
+let update (state : Result<DevTree, exn>) (request : Http.IncomingMessage)
+  (response : Http.ServerResponse) : Result<DevTree, exn> =
     match request.method with
     | Some "GET" ->
-        devTree
-        |> Map.map (fun k v -> parseSysBlock k v |> LegacyDevTree.encode)
-        |> Encode.dict
-        |> Encode.encode 0
-        |> response.``end``
+        runQuery response state Legacy
+        state
     | Some "POST" ->
         request
         |> Stream.reduce "" (fun acc x -> Ok(acc + x.toString ("utf-8")))
@@ -126,7 +49,7 @@ let serverHandler (request : Http.IncomingMessage)
                        printfn
                            "Aggregator received update with devices from host %s"
                            host
-                       devTree <- updateTree host y
+                       updateTree host y state
                    | Error x ->
                        eprintfn
                            "Aggregator received message but message decoding failed (%A)"
@@ -139,3 +62,30 @@ let serverHandler (request : Http.IncomingMessage)
     | x ->
         response.``end``()
         eprintfn "Aggregator handler got a bad match %A" x
+
+let update (state : Result<State, exn>) (command : Command) : Result<State, exn> =
+    match state with
+    | Ok state ->
+        match command with
+        | ZedCommand x ->
+            Zed.update state.zed x
+            |> Result.map (fun zed -> { state with zed = zed })
+        | UdevCommand x ->
+            Udev.update state.blockDevices x
+            |> Result.map
+                   (fun blockDevices ->
+                   { state with blockDevices = blockDevices })
+        | MountCommand x ->
+            Mount.update state.localMounts x
+            |> Result.map
+                   (fun localMounts -> { state with localMounts = localMounts })
+        | Command.Stream -> Ok state
+    | x -> x
+
+let scan init update =
+    let mutable state = init()
+    fun x ->
+        state <- update state x
+        state
+
+let handler = IML.CommonLibrary.scan init update
