@@ -10,31 +10,82 @@ open Fable.Import.Node.PowerPack
 open IML.CommonLibrary
 open IML.Types.MessageTypes
 open IML.Types.ScannerStateTypes
-open Heartbeats
 open Thoth.Json
 open Query
 open Fable
+open Fable.Import
+
+let heartbeatTimeout = 30000
+
+let clearTimeout heartbeats host =
+    Map.tryFind host heartbeats
+    |> Option.map JS.clearTimeout
+    |> ignore
+
+let addHeartbeat heartbeats handler host =
+    clearTimeout heartbeats host
+    let onTimeout() =
+        clearTimeout heartbeats host
+        reducer (RemoveHeartbeat host)
+        //heartbeats <- Map.remove host heartbeats
+        (handler host)
+
+    let token = JS.setTimeout onTimeout heartbeatTimeout
+    heartbeats <- Map.add host token heartbeats
+
+type AggregatorCommand =
+    | GetTree
+    | UpdateTree of string * string
+    | AddHeartbeat of string
+    | RemoveHeartbeat of string
 
 type DevTree = Map<string, State>
 let mutable devTree : DevTree = Map.empty
+type Heartbeats = Map<string, JS.SetTimeoutToken>
 
-let init() =
-    Ok devTree
+type AggregatorState = {
+    tree: DevTree;
+    heartbeats: Heartbeats;
+}
 
-let timeoutHandler host =
-    printfn "Aggregator received no heartbeat from host %A" host
-    devTree <- Map.remove host devTree
+let init() = {
+    tree = Map.empty
+    heartbeats = Map.empty
+}
 
-let updateTree host x devTree =
-    let state = Decode.decodeString State.decoder x |> Result.unwrap
-    Map.add host state devTree
+let rec update
+  (state : AggregatorState) (command : AggregatorCommand) : AggregatorState =
+    match command with
+    | GetTree ->
+          state
+    | UpdateTree ((host), (data)) ->
+          let newTree = data
+                        |> Decode.decodeString State.decoder
+                        |> Result.unwrap
+                        |> (fun x -> Map.add host x state.tree)
+          { state with tree = newTree }
+    | AddHeartbeat host ->
+          clearTimeout state.heartbeats host
+          let onTimeout() =
+              clearTimeout state.heartbeats host
+              update state (RemoveHeartbeat host)
+              //heartbeats <- Map.remove host heartbeats
+              //(handler, host)
+          let token = JS.setTimeout onTimeout heartbeatTimeout
+          { state with heartbeats = Map.add host token state.heartbeats }
+    | RemoveHeartbeat host ->
+          clearTimeout state.heartbeats host
+          { state with heartbeats = Map.remove host state.heartbeats }
 
-let update (state : Result<DevTree, exn>) (request : Http.IncomingMessage)
-  (response : Http.ServerResponse) : Result<DevTree, exn> =
+let reducer = IML.CommonLibrary.scan init update
+
+
+let update (state : DevTree) (request : Http.IncomingMessage)
+  (response : Http.ServerResponse) : DevTree =
     match request.method with
     | Some "GET" ->
-        runQuery response state Legacy
-        state
+        reducer (GetTree)
+            |> (fun x -> runQuery response x.tree Legacy)
     | Some "POST" ->
         request
         |> Stream.reduce "" (fun acc x -> Ok(acc + x.toString ("utf-8")))
@@ -44,12 +95,16 @@ let update (state : Result<DevTree, exn>) (request : Http.IncomingMessage)
                    eprintfn "Aggregator received message but hostname was empty"
                | Some host ->
                    match Message.decoder x with
-                   | Ok Message.Heartbeat -> addHeartbeat timeoutHandler host
+                   | Ok Message.Heartbeat ->
+                       printfn "Aggregator received no heartbeat from host %A" host
+                       reducer (AddHeartbeat host)
+                           |> ignore
                    | Ok(Message.Data y) ->
                        printfn
                            "Aggregator received update with devices from host %s"
                            host
-                       updateTree host y state
+                       reducer (UpdateTree host y)
+                           |> ignore
                    | Error x ->
                        eprintfn
                            "Aggregator received message but message decoding failed (%A)"
@@ -57,35 +112,8 @@ let update (state : Result<DevTree, exn>) (request : Http.IncomingMessage)
                | None ->
                    eprintfn
                        "Aggregator received message but x-ssl-client-name header was missing from request"
-               response.``end``())
-        |> ignore
+                response.``end``())
     | x ->
         response.``end``()
         eprintfn "Aggregator handler got a bad match %A" x
-
-let update (state : Result<State, exn>) (command : Command) : Result<State, exn> =
-    match state with
-    | Ok state ->
-        match command with
-        | ZedCommand x ->
-            Zed.update state.zed x
-            |> Result.map (fun zed -> { state with zed = zed })
-        | UdevCommand x ->
-            Udev.update state.blockDevices x
-            |> Result.map
-                   (fun blockDevices ->
-                   { state with blockDevices = blockDevices })
-        | MountCommand x ->
-            Mount.update state.localMounts x
-            |> Result.map
-                   (fun localMounts -> { state with localMounts = localMounts })
-        | Command.Stream -> Ok state
-    | x -> x
-
-let scan init update =
-    let mutable state = init()
-    fun x ->
-        state <- update state x
-        state
-
-let handler = IML.CommonLibrary.scan init update
+    state
