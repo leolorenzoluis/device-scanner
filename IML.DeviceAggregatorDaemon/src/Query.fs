@@ -8,6 +8,7 @@ open LegacyParser
 open IML.Types.LegacyTypes
 open IML.Types.ScannerStateTypes
 open Thoth.Json
+open Fable.Import.Node.Http
 
 type QueryType =
    | Legacy
@@ -96,7 +97,7 @@ let parseSysBlock devTree (host : string) (state : State) =
       zfsdatasets = zfsdatasets
       mpath = mpaths }
 
-let runQuery response devTree queryType =
+let runQuery (response : ServerResponse) devTree queryType =
     match queryType with
     | Legacy ->
         devTree
