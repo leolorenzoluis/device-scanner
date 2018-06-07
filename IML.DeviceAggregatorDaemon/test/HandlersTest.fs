@@ -11,7 +11,6 @@ open Fable.Import.Node
 open Fable.Import.Node.PowerPack.Stream
 open IML.Types.MessageTypes
 open Matchers
-open Heartbeats
 open Handlers
 open IML.Types.Fixtures
 
@@ -31,19 +30,40 @@ let heartbeatPayload =
     |> Message.encoder
     |> Some
 
-test "host has pool disks"
-<| fun () ->
-    toEqual
-        (matchPaths [ "/foo/bar"; "/foo/baz"; "/bar/baz" ]
-             [ "/foo/bar"; "/bar/baz" ], true) |> ignore
-test "host doesn't have pool disks"
-<| fun () ->
-    toEqual
-        (matchPaths [ "/foo/bar"; "/foo/baz"; "/bar/baz" ]
-             [ "/foo/bar"; "/bar/boz" ], true) |> ignore
-test "Discover no pools on host"
-<| fun () ->
-    discoverZpools "ffo.com" Map.empty Map.empty List.empty |> toMatchSnapshot
+let private hostname = "foo.com"
+
+testList "Heartbeat"
+    [ let withSetup f () : unit =
+          jest.useFakeTimers() |> ignore
+          let mutable heartbeats = Map.empty
+          f heartbeats
+          jest.clearAllTimers()
+          heartbeats <- Map.empty
+          jest.useRealTimers() |> ignore
+      yield! testFixture withSetup
+                 [ "should register timer",
+                   fun heartbeats ->
+                       heartbeats.ContainsKey hostname === false
+                       let newHeartbeats = handleHeartbeat heartbeats (AddHeartbeat hostname)
+                       newHeartbeats.ContainsKey hostname === true
+                   "should expire timer on timeout",
+                   fun heartbeats ->
+                       heartbeats.ContainsKey hostname === false
+                       let newHeartbeats = handleHeartbeat heartbeats (AddHeartbeat hostname)
+                       newHeartbeats.ContainsKey hostname === true
+                       jest.advanceTimersByTime (heartbeatTimeout + 100)
+                       newHeartbeats.ContainsKey hostname === false ] ]
+                  //  "should restart timer on next heartbeat",
+                  //  fun heartbeats ->
+                      //  heartbeats.ContainsKey hostname === false
+                      //  let newHeartbeats = handleHeartbeat heartbeats (AddHeartbeat hostname)
+                      //  newHeartbeats.ContainsKey hostname === true
+                      //  jest.advanceTimersByTime (heartbeatTimeout - 100)
+                      //  newHeartbeats.ContainsKey hostname === true
+                      //  let newerHeartbeats = handleHeartbeat newHeartbeats (AddHeartbeat hostname)
+                      //  jest.advanceTimersByTime 200
+                      //  newerHeartbeats.ContainsKey hostname === true ] ]
+
 testList "Server"
     [ let withSetup f (d : Jest.Bindings.DoneStatic) : unit =
           // bring up server to run test target handler
@@ -95,8 +115,8 @@ testList "Server"
           let patchRequest host headers =
               request (Http.Methods.Patch, ignore, host, false, headers)
           f getRequest postRequest postThenGet patchRequest
-          heartbeats <- Map.empty
-          devTree <- Map.empty
+          // heartbeats <- Map.empty
+          // devTree <- Map.empty
       yield! testFixtureDone withSetup
                  [ "should receive empty tree in get response without prior update",
                    fun get _ _ _ ->

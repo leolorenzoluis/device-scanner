@@ -15,20 +15,20 @@ open Query
 open Fable
 open Fable.Import
 
-type AggregatorCommand =
-    | AddHeartbeat of string
-    | RemoveHeartbeat of string
-    | GetTree of Http.ServerResponse
-    | UpdateTree of string * string
-
 type DevTree = Map<string, State>
 
 type Heartbeats = Map<string, JS.SetTimeoutToken>
 
-type AggregatorState = {
-    tree: DevTree;
-    heartbeats: Heartbeats;
-}
+type AggregatorCommand =
+    | AddHeartbeat of string * (AggregatorCommand -> Heartbeats)
+    | RemoveHeartbeat of string
+    | GetTree of Http.ServerResponse
+    | UpdateTree of string * string
+
+// type AggregatorState = {
+    // tree: DevTree;
+    // heartbeats: Heartbeats;
+// }
 
 let init() = Map.empty
 
@@ -42,11 +42,10 @@ let clearTimeout heartbeats host =
 let rec handleHeartbeat
   (state : Heartbeats) (command : AggregatorCommand) : Heartbeats =
     match command with
-    | AddHeartbeat host ->
+    | AddHeartbeat ((host), (handler)) ->
           clearTimeout state host
           let onTimeout() =
-              clearTimeout state host
-              handleHeartbeat state (RemoveHeartbeat host)
+              handler (RemoveHeartbeat host)
                   |> ignore
               //heartbeats <- Map.remove host heartbeats
               //(handler, host)
@@ -75,19 +74,10 @@ let rec handleTree
 let heartbeatReducer = IML.CommonLibrary.scan init handleHeartbeat
 let treeReducer = IML.CommonLibrary.scan init handleTree
 
-let aggregatorUpdate (command : AggregatorCommand) =
-    {
-        heartbeats = heartbeatReducer command
-        tree = treeReducer command
-    }
-
-
-let update (state : DevTree) (request : Http.IncomingMessage)
-  (response : Http.ServerResponse) : DevTree =
+let serverHandler (request : Http.IncomingMessage) (response : Http.ServerResponse) =
     match request.method with
     | Some "GET" ->
-        aggregatorUpdate (GetTree response)
-            |> ignore
+        treeReducer (GetTree response) |> ignore
     | Some "POST" ->
         request
         |> Stream.reduce "" (fun acc x -> Ok(acc + x.toString ("utf-8")))
@@ -98,14 +88,9 @@ let update (state : DevTree) (request : Http.IncomingMessage)
                | Some host ->
                      match Message.decoder x with
                      | Ok Message.Heartbeat ->
-                           aggregatorUpdate (AddHeartbeat host)
-                               |> ignore
+                           heartbeatReducer (AddHeartbeat (host, heartbeatReducer)) |> ignore
                      | Ok(Message.Data y) ->
-                           printfn
-                               "Aggregator received update with devices from host %s"
-                               host
-                           aggregatorUpdate (UpdateTree (host, y))
-                               |> ignore
+                           treeReducer (UpdateTree (host, y)) |> ignore
                      | Error x ->
                            eprintfn
                                "Aggregator received message but message decoding failed (%A)"
@@ -115,8 +100,6 @@ let update (state : DevTree) (request : Http.IncomingMessage)
                         "Aggregator received message but x-ssl-client-name header was missing from request"
         )
         |> ignore
-        response.``end``()
     | x ->
-        response.``end``()
         eprintfn "Aggregator handler got a bad match %A" x
-    state
+    response.``end``()
